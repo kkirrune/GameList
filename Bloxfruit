@@ -1205,7 +1205,162 @@ local function loadAntiKick(maxRetry)
     maxRetry = maxRetry or 3
     for i = 1, maxRetry do
         local ok, err = pcall(function()
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/kkirrune/kkirruhubd/refs/heads/main/Anti-Kick.lua"))()
+if _G.AntiKick == true then return end
+_G.AntiKick = true
+
+-- Services
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local StarterGui = game:GetService("StarterGui")
+local LocalPlayer = Players.LocalPlayer
+
+-- Check compatibility
+if not hookmetamethod then
+    warn("Anti-Kick: Executor does not support hookmetamethod")
+    return
+end
+
+-- Configuration
+local Config = {
+    enabled = true,
+    notify = true,
+    autoRejoin = true, -- Automatically reconnects if kicked
+    max_per_10s = 3,
+    max_per_60s = 10,
+    unsafeWords = {"cheat", "hack", "exploit", "inject", "byfron", "detection", "suspicious", "staff", "admin"},
+    safeWords = {"maintenance", "update", "restart", "timeout", "inactivity", "teleport"}
+}
+
+-- State Management
+local kicks = {}
+local blocks = 0
+local lastNotify = 0
+
+-- Helper: Rejoin Function
+local function rejoinServer()
+    if #Players:GetPlayers() <= 1 then
+        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+    else
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+    end
+end
+
+-- Helper: UI Notification
+local function notify(title, text)
+    if not Config.notify then return end
+    local now = tick()
+    if now - lastNotify < 3 then return end
+    lastNotify = now
+    
+    task.spawn(function()
+        pcall(function()
+            StarterGui:SetCore("SendNotification", {
+                Title = title,
+                Text = text,
+                Duration = 3
+            })
+        end)
+    end)
+end
+
+-- Helper: String Search
+local function containsWord(reason, wordList)
+    local lowerReason = string.lower(tostring(reason))
+    for _, word in ipairs(wordList) do
+        if string.find(lowerReason, word:lower(), 1, true) then
+            return true, word
+        end
+    end
+    return false
+end
+
+-- Main Hook
+local originalNamecall
+originalNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    
+    if (method == "Kick" or method == "kick") and self == LocalPlayer then
+        if not Config.enabled or checkcaller() then 
+            return originalNamecall(self, ...) 
+        end
+
+        local reason = args[1] or "No reason provided"
+        local now = tick()
+
+        -- 1. Check for Unsafe Reasons
+        local isUnsafe, detectedWord = containsWord(reason, Config.unsafeWords)
+        if isUnsafe then
+            blocks = blocks + 1
+            notify("Kick Blocked", "Reason: " .. detectedWord)
+            
+            if Config.autoRejoin then
+                task.wait(0.5)
+                rejoinServer()
+            end
+            return nil
+        end
+
+        -- 2. Check for Safe Reasons
+        local isSafe = containsWord(reason, Config.safeWords)
+        if isSafe then
+            return originalNamecall(self, ...)
+        end
+
+        -- 3. Rate Limit Logic
+        table.insert(kicks, now)
+        local validKicks = {}
+        local count10s, count60s = 0, 0
+        for _, t in ipairs(kicks) do
+            if now - t < 60 then
+                table.insert(validKicks, t)
+                count60s = count60s + 1
+                if now - t < 10 then count10s = count10s + 1 end
+            end
+        end
+        kicks = validKicks
+
+        if count10s > Config.max_per_10s or count60s > Config.max_per_60s then
+            blocks = blocks + 1
+            notify("Rate Limited", "Too many kick attempts detected")
+            if Config.autoRejoin then rejoinServer() end
+            return nil
+        end
+
+        -- Default Protection
+        blocks = blocks + 1
+        notify("Protection Active", "Blocked unknown kick attempt")
+        return nil
+    end
+
+    return originalNamecall(self, ...)
+end)
+
+-- Handle unexpected disconnection (Internal kicks)
+if Config.autoRejoin then
+    game:GetService("GuiService").ErrorMessageChanged:Connect(function()
+        task.wait(0.1)
+        rejoinServer()
+    end)
+end
+
+-- Global API
+_G.AK = {
+    toggle = function()
+        Config.enabled = not Config.enabled
+        notify("Anti-Kick", Config.enabled and "Enabled" or "Disabled")
+    end,
+    rejoin = function()
+        rejoinServer()
+    end,
+    getStats = function()
+        print("Blocks: " .. blocks .. " | Recent: " .. #kicks)
+        return {blocks = blocks, recent = #kicks}
+    end
+}
+
+print("Anti-Kick Successfully")
+
         end)
         if ok then return true end
         warn(("[AntiKick] Try %d/%d failed: %s"):format(i, maxRetry, tostring(err)))
@@ -1397,19 +1552,342 @@ Changelog:addChangelog('Thông Tin Liên Hệ')
 Changelog:addChangelog('FB : kkirrune ')
 Changelog:addChangelog('Tạm Biệt Tất Cả mn')
 
--- Fix loadstring: Kiểm tra dữ liệu trước khi chạy
-local fastAttack = pcall(function() 
-    local str = game:HttpGet("https://raw.githubusercontent.com/kkirrune/kkirruhubd/refs/heads/main/FastAttack.lua")
-    if str and str ~= "" then loadstring(str)() end
-end)
---// PATH
+_G.FastAttack = true
+
+if _G.FastAttack then
+    -- Services
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Workspace = game:GetService("Workspace")
+    
+    -- Player
+    local Player = Players.LocalPlayer
+    if not Player then return end
+    
+    -- Config
+    local Config = {
+        Enabled = true,
+        AttackDelay = 0.15,
+        AttackDistance = 30,
+        AttackMobs = true,
+        AttackPlayers = false
+    }
+    
+    -- Cache
+    local lastAttack = 0
+    local attackThread = nil
+    local cachedEnemies = nil
+    
+    -- Find remotes efficiently
+    local function GetAttackRemotes()
+        local Modules = ReplicatedStorage:WaitForChild("Modules", 5)
+        if not Modules then return nil, nil end
+        
+        local Net = Modules:WaitForChild("Net", 5)
+        if not Net then return nil, nil end
+        
+        local RE = Net:WaitForChild("RE", 5)
+        if not RE then return nil, nil end
+        
+        return RE:FindFirstChild("RegisterAttack"), RE:FindFirstChild("RegisterHit")
+    end
+    
+    local RegisterAttack, RegisterHit = GetAttackRemotes()
+    if not RegisterAttack or not RegisterHit then
+        warn("Attack remotes not found")
+        return
+    end
+    
+    -- Get enemy folder if exists
+    local function GetEnemyFolder()
+        if cachedEnemies then return cachedEnemies end
+        
+        -- Try common enemy locations
+        local enemyLocations = {
+            Workspace:FindFirstChild("Enemies"),
+            Workspace:FindFirstChild("_WorldOrigin"):FindFirstChild("EnemySpawns"),
+            Workspace:FindFirstChild("_WorldOrigin"):FindFirstChild("Enemies"),
+            Workspace:FindFirstChild("Map"):FindFirstChild("Enemies")
+        }
+        
+        for _, folder in ipairs(enemyLocations) do
+            if folder and folder:IsA("Folder") then
+                cachedEnemies = folder
+                return folder
+            end
+        end
+        
+        return Workspace -- Fallback to entire workspace
+    end
+    
+    -- Get valid targets
+    local function GetValidTargets()
+        local targets = {}
+        local character = Player.Character
+        if not character then return targets end
+        
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if not root then return targets end
+        
+        local enemyFolder = GetEnemyFolder()
+        local scanList = {}
+        
+        -- Get scanning targets
+        if enemyFolder ~= Workspace then
+            scanList = enemyFolder:GetChildren()
+        else
+            -- Fallback: scan only models with Humanoid
+            for _, obj in ipairs(Workspace:GetChildren()) do
+                if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") then
+                    table.insert(scanList, obj)
+                end
+            end
+        end
+        
+for _, model in ipairs(scanList) do
+    if model ~= character then
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        local targetPart = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head")
+
+        if humanoid and humanoid.Health > 0 and targetPart then
+            local isPlayer = Players:GetPlayerFromCharacter(model)
+
+            if (isPlayer and Config.AttackPlayers) or (not isPlayer and Config.AttackMobs) then
+                local distance = (targetPart.Position - root.Position).Magnitude
+                if distance <= Config.AttackDistance then
+                    table.insert(targets, {
+                        Model = model,
+                        Part = targetPart,
+                        Distance = distance
+                    })
+                end
+            end
+        end
+    end
+end
+        
+        -- Sort by distance
+        table.sort(targets, function(a, b)
+            return a.Distance < b.Distance
+        end)
+        
+        return targets
+    end
+    
+    -- Attack function
+    local function Attack()
+        if tick() - lastAttack < Config.AttackDelay then return end
+        
+        local targets = GetValidTargets()
+        if #targets == 0 then return end
+        
+        -- Format targets for remote
+        local formattedTargets = {}
+        for _, target in ipairs(targets) do
+            table.insert(formattedTargets, {target.Model, target.Part})
+        end
+        
+        -- Send attack
+        local success, err = pcall(function()
+            RegisterAttack:FireServer()
+            RegisterHit:FireServer(targets[1].Part, formattedTargets)
+        end)
+        
+        if not success then
+            warn("Attack failed:", err)
+        else
+            lastAttack = tick()
+        end
+    end
+    
+    -- Main loop
+    local function StartAttackLoop()
+        if attackThread then return end
+        
+        attackThread = task.spawn(function()
+            while Config.Enabled do
+                local char = Player.Character
+                local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+                
+                -- Only attack if character is alive
+                if char and humanoid and humanoid.Health > 0 then
+                    Attack()
+                else
+                    lastAttack = tick() -- Reset attack cooldown when dead
+                end
+                
+                -- Adaptive wait time
+                local waitTime = 0.05
+                local targets = GetValidTargets()
+                if #targets == 0 then
+                    waitTime = 0.2 -- Wait longer if no targets
+                end
+                
+                task.wait(waitTime)
+            end
+            attackThread = nil
+        end)
+    end
+    
+    -- Controls
+    local Controls = {}
+    
+    function Controls.Toggle(state)
+        if state ~= nil then
+            Config.Enabled = state
+        else
+            Config.Enabled = not Config.Enabled
+        end
+        
+        if Config.Enabled then
+            StartAttackLoop()
+        end
+        
+        return Config.Enabled
+    end
+    
+    function Controls.SetDelay(delay)
+        local num = tonumber(delay)
+        if num and num > 0 then
+            Config.AttackDelay = math.max(0.05, num)
+            return true
+        end
+        return false
+    end
+    
+    function Controls.SetDistance(dist)
+        local num = tonumber(dist)
+        if num then
+            Config.AttackDistance = math.clamp(num, 10, 100)
+            return true
+        end
+        return false
+    end
+    
+    -- Initialize
+    Controls.Toggle(true)
+    
+    -- Store controls globally
+    getgenv().FastAttack = Controls
+    
+    print("Fast Attack Initialized | Controls: FastAttack.Toggle(), FastAttack.SetDelay(), FastAttack.SetDistance()")
+end
+
 task.wait(1)
 
--- Fix loadstring: Kiểm tra dữ liệu trước khi chạy
-local bypassing = pcall(function()
-    local str = game:HttpGet('https://raw.githubusercontent.com/kkirrune/kkirruhubd/refs/heads/main/bypassing.lua')
-    if str and str ~= "" then loadstring(str)() end
-end)
+-- Minimal bypass - Maximum stability
+local function SafeBypass()
+    -- Safe logging without crash
+    local function logInfo(msg) print("[BY] " .. msg) end
+    local function logWarn(msg) warn("[BY] " .. msg) end
+    
+    logInfo("Initializing...")
+    
+    -- Wait for game properly
+    if not game:IsLoaded() then
+        game.Loaded:Wait()
+    end
+    
+    local RunService = game:GetService("RunService")
+    if not RunService:IsClient() then
+        repeat task.wait(0.1) until RunService:IsClient()
+    end
+    
+    task.wait(0.1)
+    
+    -- 1. Hook metamethod with safety
+    if type(hookmetamethod) == "function" then
+        local success, originalNamecall = pcall(function()
+            return hookmetamethod(game, "__namecall", function(self, ...)
+                -- Safe getnamecallmethod with guard
+                local method = ""
+                if type(getnamecallmethod) == "function" then
+                    method = getnamecallmethod() or ""
+                end
+                
+                -- Block kicks
+                if method == "Kick" or method == "kick" then
+                    return nil
+                end
+                
+                -- Guard original call
+                if not originalNamecall then
+                    return nil
+                end
+                
+                return originalNamecall(self, ...)
+            end)
+        end)
+        
+        if not success then
+            logWarn("Metamethod hook failed")
+        end
+    end
+    
+    -- 2. Scan for target function
+    if type(getgc) ~= "function" then
+        logWarn("getgc not available")
+        return false
+    end
+    
+    local gc = getgc()
+    if type(gc) ~= "table" then
+        logWarn("getgc didn't return table")
+        return false
+    end
+    
+    local targetFunc = nil
+    
+    for _, v in pairs(gc) do
+        if type(v) == "function" then
+            -- Safe getinfo with pcall
+            local success, funcInfo = pcall(function()
+                return getinfo(v)
+            end)
+            
+            if success and funcInfo and funcInfo.name == "_check" then
+                targetFunc = v
+                break
+            end
+        end
+    end
+    
+    -- 3. Hook target function if found
+    if targetFunc then
+        local function replacement()
+            return true
+        end
+        
+        -- Try hookfunction
+        if type(hookfunction) == "function" then
+            local success = pcall(hookfunction, targetFunc, replacement)
+            if success then
+                return true
+            end
+        end
+        
+        -- Try replaceclosure
+        if type(replaceclosure) == "function" then
+            local success = pcall(replaceclosure, targetFunc, replacement)
+            if success then
+                logInfo("Bypass applied successfully")
+                return true
+            end
+        end
+        
+        logWarn("Found function but couldn't hook")
+    else
+        logWarn("Target function not found")
+    end
+    
+    return false
+end
+
+-- Run with top-level protection
+local success, result = pcall(SafeBypass)
+if not success then
+    warn("Bypass failed completely: " .. tostring(result))
+end
 
 -- Fix lỗi Main:FindFirstChild: Đợi PlayerGui và Main xuất hiện
 local Player = game:GetService("Players").LocalPlayer
@@ -6979,32 +7457,61 @@ Tween(CFrame.new(
             0, 1, 0,
             -0.874608099, 0, 0.484830558
         ))
-    else
-        if game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("DressrosaQuestProgress").UsedKey == true then
-            if game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("DressrosaQuestProgress").KilledIceBoss == false then
-                for i, v in pairs(game.Workspace.Enemies:GetChildren()) do
-                    if v.Name == "Ice Admiral" then
-                        EquipTool(SelectWeapon)
-                        Tween(v.HumanoidRootPart.CFrame * Farm_Mode)
-                        AutoClick()
+local CommF = game:GetService("ReplicatedStorage").Remotes.CommF_
+
+local function FarmIceAdmiral()
+    local progress
+    local ok = pcall(function()
+        progress = CommF:InvokeServer("DressrosaQuestProgress")
+    end)
+    
+    if not ok or not progress then return end
+    
+    if progress.UsedKey == true then
+        if progress.KilledIceBoss == false then
+            local foundBoss = false
+            
+            -- Tìm trong Workspace
+            for _, v in pairs(game.Workspace.Enemies:GetChildren()) do
+                if v.Name == "Ice Admiral" then
+                    if v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Humanoid") then
+                        if v.Humanoid.Health > 0 then
+                            local hrp = v.HumanoidRootPart
+                            if SelectWeapon then
+                                EquipTool(SelectWeapon)
+                            end
+                            Tween(hrp.CFrame * (Farm_Mode or CFrame.new(0, 5, 8)))
+                            if AutoClick then
+                                AutoClick()
+                            end
+                            foundBoss = true
+                            break
+                        end
                     end
-                end
-                
-                for i, v in pairs(game.ReplicatedStorage:GetChildren()) do
-                    if v.Name == "Ice Admiral" then
-                        -- Lưu ý: ReplicatedStorage thường không có HumanoidRootPart trực tiếp, 
-                        -- nhưng tôi giữ nguyên theo cấu trúc cũ của bạn.
-                        Tween(v.HumanoidRootPart.CFrame * Farm_Mode)
-                    end
-                end
-            else
-                if game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("DressrosaQuestProgress").KilledIceBoss == true then
-                    game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("TravelDressrosa")
                 end
             end
+            
+            -- Nếu không thấy, tìm spawn point trong ReplicatedStorage
+            if not foundBoss then
+                for _, v in pairs(game.ReplicatedStorage:GetChildren()) do
+                    if v.Name == "Ice Admiral" then
+                        local hrp = v:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            Tween(hrp.CFrame * (Farm_Mode or CFrame.new(0, 5, 8)))
+                        end
+                        break
+                    end
+                end
+            end
+        else
+            -- Hoàn thành quest
+            pcall(function()
+                CommF:InvokeServer("TravelDressrosa")
+            end)
         end
     end
-end) -- Đóng function/pcall nếu có
+end
+
 World_Quest:addToggle('Auto Third World [Lv. 1500]', AutoThirdWorld,function(Value)
  AutoThirdWorld = Value
  CancelTween(AutoThirdWorld)
@@ -7938,35 +8445,125 @@ game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("ProQuestProgre
  end
  if game:GetService("Workspace").Enemies:FindFirstChild("Saber Expert") then
  for i,v in
-pairs(game:GetService("Workspace").Enemies:GetChildre)) do
- if v:FindFirstChild("Humanoid") and v:FindFirstChild("HumanoidRootPart") and v.Humanoid.Health > 0 then
- if v.Name == "Saber Expert" thenn( repeat
-game:GetService("RunService").Heartbeat:wait()
- EquipTool(SelectWeapon)
- Tween(v.HumanoidRootPart.CFrame * Farm_Mode)
- v.HumanoidRootPart.CanCollide = false
- v.HumanoidRootPart.Size =Vector3.new(60,60,60)
- v.HumanoidRootPart.Transparency = 1
- v.Humanoid:ChangeState(11)
- v.Humanoid:ChangeState(14)
- AutoClick()
- until v.Humanoid.Health <= 0 or AutoSaber ==false
- if v.Humanoid.Health <= 0 then
+     
 
-game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("ProQuestProgress","PlaceRelic")
- end
- end
- end
- end
- else
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 
-Tween(game:GetService("ReplicatedStorage"):FindFirstChild("Saber Expert").HumanoidRootPart.CFrame)
- end
- end
- end)
- end
- end
-end)
+-- Kiểm tra quest RichSon
+if game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("ProQuestProgress","RichSon") == 1 then
+
+    wait(0.5)
+    
+    if EquipTool then
+        EquipTool("Relic")
+    end
+    
+    wait(0.5)
+    
+    if Tween then
+        Tween(CFrame.new(-1404.91504, 29.9773273, 3.80598116, 0.876514494, 5.66906877e-09, 0.481375456, 2.53851997e-08, 1, -5.79995607e-08, -0.481375456, 6.30572643e-08, 0.876514494))
+    end
+end
+
+if game:GetService("Workspace").Enemies:FindFirstChild("Saber Expert") then
+    for i, v in pairs(game:GetService("Workspace").Enemies:GetChildren()) do
+        if v.Name == "Saber Expert" and v:FindFirstChild("HumanoidRootPart") then
+            -- Code xử lý Saber Expert ở đây
+        end
+    end
+end
+
+-- Hàm auto farm Saber Expert
+local function AutoFarmSaberExpert()
+    if not _G.AutoSaber then return end
+    
+    local saberExpert = nil
+    
+    for _, enemy in pairs(Workspace.Enemies:GetChildren()) do
+        if enemy.Name == "Saber Expert" 
+            and enemy:FindFirstChild("HumanoidRootPart") 
+            and enemy:FindFirstChild("Humanoid")
+            and enemy.Humanoid.Health > 0 then
+            
+            saberExpert = enemy
+            break
+        end
+    end
+    
+    if saberExpert then
+        local hrp = saberExpert.HumanoidRootPart
+        
+        while _G.AutoSaber and saberExpert.Parent 
+            and saberExpert:FindFirstChild("Humanoid") 
+            and saberExpert.Humanoid.Health > 0 do
+            
+            RunService.Heartbeat:Wait()
+            
+            if _G.SelectWeapon then
+                if EquipTool then
+                    EquipTool(_G.SelectWeapon)
+                end
+            end
+            
+            if hrp and hrp.Parent then
+                if Tween then
+                    local offset = _G.Farm_Mode or CFrame.new(0, 5, 8)
+                    Tween(hrp.CFrame * offset)
+                end
+            end
+            
+            if _G.AutoClick then
+                _G.AutoClick()
+            end
+            
+            local char = LocalPlayer.Character
+            if char and char:FindFirstChild("HumanoidRootPart") and hrp then
+                local distance = (char.HumanoidRootPart.Position - hrp.Position).Magnitude
+                if distance > 50 then
+                    break
+                end
+            end
+        end
+        
+        if saberExpert and saberExpert:FindFirstChild("Humanoid") 
+            and saberExpert.Humanoid.Health <= 0 then
+            
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Auto Saber Expert",
+                Text = "Đã đánh bại Saber Expert!",
+                Duration = 3
+            })
+        end
+        
+    else
+        for _, model in pairs(game.ReplicatedStorage:GetChildren()) do
+            if model.Name == "Saber Expert" then
+                local hrp = model:FindFirstChild("HumanoidRootPart")
+                if hrp and Tween then
+                    local offset = _G.Farm_Mode or CFrame.new(0, 5, 8)
+                    Tween(hrp.CFrame * offset)
+                end
+                break
+            end
+        end
+    end
+end
+
+local function StartAutoSaber()
+    if not _G.AutoSaber then return end
+    
+    while _G.AutoSaber do
+        AutoFarmSaberExpert()
+        task.wait(0.2)
+    end
+end
+
+
+-- Nếu bạn muốn chạy một đoạn sau khi scan xong thì đặt ở đây (không thêm end linh tinh)
+-- actions...
+
 Sword_Wuest:addToggle('Auto Legendary Sword', AutoLegendarySword, function(Value)
  AutoLegendarySword = Value
 end)
@@ -8241,7 +8838,6 @@ Tween(game:GetService("ReplicatedStorage"):FindFirstChild("Urban").HumanoidRootP
  end
  end
  end
- else
  Tween(CFrame.new(-12554.9443, 337.194092, -7501.44727))
  end
  elseif game.Players.LocalPlayer.Backpack:FindFirstChild("God's Chalice") or
@@ -8432,37 +9028,34 @@ game.Players.LocalPlayer.Character.HumanoidRootPart.Position).Magnitude <= 8
  EquipTool("Hallow Essence")
  else
 
-Tween(game:GetService("ReplicatedStorage"):FindFirstChild("Soul
-Reaper").HumanoidRootPart.CFrame)
- end
- end
- end)
- end
- end
-end)
+-- Sửa lỗi Tween cho Soul Reaper
+Tween(game:GetService("ReplicatedStorage"):FindFirstChild("Soul Reaper").HumanoidRootPart.CFrame)
+
+-- Toggle Auto Citizen
 Other_Quest:addToggle('Auto Citizen', AutoCitizen, function(Value)
- AutoCitizen = Value
- CancelTween(AutoCitizen)
- if game.Players.LocalPlayer.Backpack:FindFirstChild("Musketeer Hat") then
- CTCH = true
- elseif game.Players.LocalPlayer.Character:FindFirstChild("Musketeer Hat") then
- CTCH = true
- end
- if CTCH and CheckCitizen then
- game:GetService("StarterGui"):SetCore("SendNotification",{
- Title = "Auto Quest Citizen",
- Text = "Musketeer Hat Successfully",
- Duration = 3
- })
- elseif
-game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("CitizenQuestProgr
-ess","Citizen") == 3 and CheckCitizen then
- game:GetService("StarterGui"):SetCore("SendNotification",{
- Title = "Auto Quest Citizen",
- Text = "Citizen Quest Completed",
- Duration = 3
- })
- end
+    AutoCitizen = Value
+    CancelTween(AutoCitizen)
+    
+    local CTCH = false
+    if game.Players.LocalPlayer.Backpack:FindFirstChild("Musketeer Hat") then
+        CTCH = true
+    elseif game.Players.LocalPlayer.Character:FindFirstChild("Musketeer Hat") then
+        CTCH = true
+    end
+    
+    if CTCH and CheckCitizen then
+        game:GetService("StarterGui"):SetCore("SendNotification",{
+            Title = "Auto Quest Citizen",
+            Text = "Musketeer Hat Successfully",
+            Duration = 3
+        })
+    elseif game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("CitizenQuestProgress","Citizen") == 3 and CheckCitizen then
+        game:GetService("StarterGui"):SetCore("SendNotification",{
+            Title = "Auto Quest Citizen",
+            Text = "Citizen Quest Completed",
+            Duration = 3
+        })
+    end
 end)
 spawn(function()
  while task.wait() do
@@ -8516,67 +9109,41 @@ game.Players.LocalPlayer.Character.HumanoidRootPart.Position).Magnitude <= 30 th
 
 game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("StartQuest","CitizenQuest", 1)
 
- end
- end
- elseif game.Players.LocalPlayer.Data.Level.Value >= 1800 and
-game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("CitizenQuestProgress").KilledBoss == false then
- if game.Players.LocalPlayer.PlayerGui.Main.Quest.Visible and
-string.find(game:GetService("Players").LocalPlayer.PlayerGui.Main.Quest.Container.Q
-uestTitle.Title.Text, "Captain Elephant") and
-game.Players.LocalPlayer.PlayerGui.Main.Quest.Visible == true then
- if
-game:GetService("Workspace").Enemies:FindFirstChild("Captain Elephant") then
- for i,v in
-pairs(game:GetService("Workspace").Enemies:GetChildren()) do
- if v.Name == "Captain Elephant" then
- repeat
-game:GetService("RunService").Heartbeat:wait()
- EquipTool(SelectWeapon)
- Tween(v.HumanoidRootPart.CFrame *
-Farm_Mode)
- v.HumanoidRootPart.CanCollide = false
- v.HumanoidRootPart.Size =
-Vector3.new(60,60,60)
- v.HumanoidRootPart.Transparency = 1
- v.Humanoid:ChangeState(11)
- v.Humanoid:ChangeState(14)
- AutoClick()
- until AutoCitizen == false or v.Humanoid.Health
-<= 0 or not v.Parent or game.Players.LocalPlayer.PlayerGui.Main.Quest.Visible ==false or not gamr:GetService("Workspace").Enemies:FindFirstChild(v.Name)
-
- end
- end
- else
- if ByPassTP then
- BTP(CFrame.new(-13459.065429688, 412.68927001953, -
-7783.1860351563))
- else
- Tween(CFrame.new(-13459.065429688, 412.68927001953,
--7783.1860351563))
- end
- end
- else
- Tween(CFrame.new(-12443.8671875, 332.40396118164, -
-7675.4892578125))
- if (CFrame.new(-12443.8671875, 332.40396118164, -
-7675.4892578125).Position -
-game.Players.LocalPlayer.Character.HumanoidRootPart.Position).Magnitude <= 4 then
- wait(1.5)
-
-game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("CitizenQuestProgress","Citizen")
-
- end
- end
- elseif game.Players.LocalPlayer.Data.Level.Value >= 1800 and
-game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("CitizenQuestProgress","Citizen") == 2 then
-
- Tween(CFrame.new(-12512.138671875, 340.39279174805, -9872.8203125))
-
- end
- end)
- end
- end
-end)
+elseif game.Players.LocalPlayer.Data.Level.Value >= 1800 and game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("CitizenQuestProgress").KilledBoss == false then
+    if game.Players.LocalPlayer.PlayerGui.Main.Quest.Visible and string.find(game.Players.LocalPlayer.PlayerGui.Main.Quest.Container.QuestTitle.Title.Text, "Captain Elephant") then
+        if game:GetService("Workspace").Enemies:FindFirstChild("Captain Elephant") then
+            for i,v in pairs(game:GetService("Workspace").Enemies:GetChildren()) do
+                if v.Name == "Captain Elephant" then
+                    repeat
+                        game:GetService("RunService").Heartbeat:wait()
+                        EquipTool(SelectWeapon)
+                        Tween(v.HumanoidRootPart.CFrame * Farm_Mode)
+                        v.HumanoidRootPart.CanCollide = false
+                        v.HumanoidRootPart.Size = Vector3.new(60,60,60)
+                        v.HumanoidRootPart.Transparency = 1
+                        v.Humanoid:ChangeState(11)
+                        v.Humanoid:ChangeState(14)
+                        AutoClick()
+                    until AutoCitizen == false or v.Humanoid.Health <= 0 or not v.Parent or game.Players.LocalPlayer.PlayerGui.Main.Quest.Visible == false or not game:GetService("Workspace").Enemies:FindFirstChild(v.Name)
+                end
+            end
+        else
+            if ByPassTP then
+                BTP(CFrame.new(-13459.065429688, 412.68927001953, -7783.1860351563))
+            else
+                Tween(CFrame.new(-13459.065429688, 412.68927001953, -7783.1860351563))
+            end
+        end
+    else
+        Tween(CFrame.new(-12443.8671875, 332.40396118164, -7675.4892578125))
+        if (CFrame.new(-12443.8671875, 332.40396118164, -7675.4892578125).Position - game.Players.LocalPlayer.Character.HumanoidRootPart.Position).Magnitude <= 4 then
+            wait(1.5)
+            game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("CitizenQuestProgress","Citizen")
+        end
+    end
+elseif game.Players.LocalPlayer.Data.Level.Value >= 1800 and game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("CitizenQuestProgress","Citizen") == 2 then
+    Tween(CFrame.new(-12512.138671875, 340.39279174805, -9872.8203125))
+end
 Other_Quest:addToggle('Auto Evo Race V2', AutoEvoRace, function(Value)
  AutoEvoRace = Value
  CancelTween(AutoEvoRace)
@@ -8654,35 +9221,61 @@ game:GetService("Workspace").Enemies:FindFirstChild(v.Name)
  elseif
 game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("Alchemist","1")== 2 then
 
-game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("Alchemist","3")
- end
- end
- end)
- end
- end
-end)
+-- Toggle Auto Bartilo
 Other_Quest:addToggle('Auto Bartilo', AutoBartilo, function(Value)
- AutoBartilo = Value
- CancelTween(AutoBartilo)
- if game.Players.LocalPlayer.Backpack:FindFirstChild("Warrior Helmet") then
- Success = true
- elseif game.Players.LocalPlayer.Character:FindFirstChild("Warrior Helmet") then
- Success = true
- end
+    AutoBartilo = Value
+    CancelTween(AutoBartilo)
+    
+    -- Kiểm tra nếu đã có Warrior Helmet
+    if game.Players.LocalPlayer.Backpack:FindFirstChild("Warrior Helmet") then
+        Success = true
+    elseif game.Players.LocalPlayer.Character:FindFirstChild("Warrior Helmet") then
+        Success = true
+    else
+        Success = false
+    end
 end)
+
 spawn(function()
- while task.wait(0.2) do
- if AutoBartilo then
- pcall(function()
- if game.Players.LocalPlayer.Data.Level.Value >= 850 and
-game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("BartiloQuestProgr
-ess","Bartilo") == 0 then
- if
-string.find(game.Players.LocalPlayer.PlayerGui.Main.Quest.Container.QuestTitle.Title.Text, "Swan Pirates") and
+    while task.wait(0.2) do
+        if AutoBartilo then
+            pcall(function()
+                -- Kiểm tra level và quest progress
+                if game.Players.LocalPlayer.Data.Level.Value >= 850 and 
+                   game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("BartiloQuestProgress","Bartilo") == 0 then
+                    
+                    -- Kiểm tra quest hiện tại
+                    if game.Players.LocalPlayer.PlayerGui.Main.Quest.Visible == true then
+                        local questTitle = game.Players.LocalPlayer.PlayerGui.Main.Quest.Container.QuestTitle.Title.Text
+                        
+                        if string.find(questTitle, "Swan Pirates") and string.find(questTitle, "50") then
+                            -- Đã có quest đúng, thực hiện farm ở đây
+                            -- ... code farm Swan Pirates ...
+                            
+                        else
+                            -- Chưa có quest đúng, nhận quest mới
+                            game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("StartQuest", "BartiloQuest", 1)
+                        end
+                    else
+                        -- Chưa có quest nào, nhận quest
+                        game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("StartQuest", "BartiloQuest", 1)
+                    end
+                elseif game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("BartiloQuestProgress","Bartilo") == 1 then
+                    -- Phần 2 của quest Bartilo
+                    -- ... code cho phần 2 ...
+                    
+                elseif game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("BartiloQuestProgress","Bartilo") == 2 then
+                    -- Đã hoàn thành quest Bartilo
+                    if AutoBartilo then
+                        AutoBartilo = false
+                        print("Đã hoàn thành quest Bartilo!")
+                    end
+                end
+            end)
+        end
+    end
+end)
 
-string.find(game.Players.LocalPlayer.PlayerGui.Main.Quest.Container.QuestTitle.Title.Text, "50") and game.Players.LocalPlayer.PlayerGui.Main.Quest.Visible == true
-
-then
  if
 game:GetService("Workspace").Enemies:FindFirstChild("Swan Pirate") then
  for i,v in
@@ -9044,18 +9637,17 @@ game:GetService("ReplicatedStorage"):FindFirstChild("Captain Elephant") then
 
  if ByPassTP then
 
-BTP(game:GetService("ReplicatedStorage"):FindFirstChild("Captain
-Elephant").HumanoidRootPart.CFrame)
- else
+-- lấy mob an toàn
+local RS = game:GetService("ReplicatedStorage")
+local mob = RS:FindFirstChild("Captain Elephant")
 
-Tween(game:GetService("ReplicatedStorage"):FindFirstChild("Captain
-Elephant").HumanoidRootPart.CFrame)
- end
- end
- end
- elseif
-string.find(game:GetService("Players").LocalPlayer.PlayerGui.Main.Quest.Container.QuestTitle.Title.Text,"Beautiful Pirate") then
-
+if mob and mob:FindFirstChild("HumanoidRootPart") then
+    if BTP then
+        BTP(mob.HumanoidRootPart.CFrame)
+    else
+        Tween(mob.HumanoidRootPart.CFrame)
+    end
+end
  if
 game:GetService("Workspace").Enemies:FindFirstChild("Beautiful Pirate") then
  for i,v in
@@ -9104,7 +9696,7 @@ Tween(game:GetService("ReplicatedStorage"):FindFirstChild("Beautiful Pirate").Hu
 game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("HornedMan","Bet")
  end
  end
- end)
+ end
  end
  end
 end)
@@ -9149,8 +9741,7 @@ spawn(function()
  if
 game:GetService("Workspace").NPCs:FindFirstChild("Skeleton Machine") then
 
-game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("soulGuitarBuy",tr
-ue)
+game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("soulGuitarBuy",true)
  else
  if game:GetService("Workspace").Map["Haunted Castle"].Candle1.Transparency == 0 then
 
@@ -9188,26 +9779,32 @@ fireclickdetector(game:GetService("Workspace").Map["Haunted Castle"].Placard2.Ri
 
 fireclickdetector(game:GetService("Workspace").Map["Haunted Castle"].Placard1.Right.ClickDetector)
 
- wait(1)
- elseif game:GetService("Workspace").Map["Haunted Castle"].Tablet.Segment1:FindFirstChild("ClickDetector") then
- if game:GetService("Workspace").Map["Haunted Castle"]["Lab Puzzle"].ColorFloor.Model.Part1:FindFirstChild("ClickDetector") then
- Quest4 = true
- repeat task.wait(0.2
- Tween(CFrame.new(-9553.5986328125,65.62338256835938, 6041.58837890625))
- until (CFrame.new(-9553.5986328125,65.62338256835938, 6041.58837890625).Position -
-game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).Magnitude <= 3 or not AutoSoulGuitar
- wait(1)
+wait(1)
 
-Tween(game:GetService("Workspace").Map["Haunted Castle"]["LabPuzzle"].ColorFloor.Model.Part3.CFrame)
- wait(1)
+elseif game:GetService("Workspace").Map["Haunted Castle"].Tablet.Segment1:FindFirstChild("ClickDetector") then
+    local WS = game:GetService("Workspace")
+    local LP = game:GetService("Players").LocalPlayer
 
-fireclickdetector(game:GetService("Workspace").Map["Haunted Castle"]["Lab
-Puzzle"].ColorFloor.Model.Part3.ClickDetector)
- wait(1)
+    local Lab = WS.Map["Haunted Castle"]["Lab Puzzle"] -- giữ đúng 1 tên (Lab Puzzle)
+    if Lab.ColorFloor.Model.Part1:FindFirstChild("ClickDetector") then
+        Quest4 = true
 
-Tween(game:GetService("Workspace").Map["Haunted Castle"]["Lab
-Puzzle"].ColorFloor.Model.Part4.CFrame)
- wait(1)
+        local targetCF = CFrame.new(-9553.5986328125, 65.62338256835938, 6041.58837890625)
+        repeat
+            task.wait(0.2)
+            Tween(targetCF)
+        until (targetCF.Position - LP.Character.HumanoidRootPart.Position).Magnitude <= 3 or not AutoSoulGuitar
+
+        wait(1)
+
+        Tween(Lab.ColorFloor.Model.Part3.CFrame)
+        wait(1)
+        fireclickdetector(Lab.ColorFloor.Model.Part3.ClickDetector)
+        wait(1)
+
+        Tween(Lab.ColorFloor.Model.Part4.CFrame)
+        wait(1)
+    end
 
 fireclickdetector(game:GetService("Workspace").Map["Haunted Castle"]["LabPuzzle"].ColorFloor.Model.Part4.ClickDetector)
  wait(1)
@@ -9272,42 +9869,33 @@ Tween(v.HumanoidRootPart.CFrame * Farm_Mode)
 v.HumanoidRootPart.CanCollide = false
  v.HumanoidRootPart.Size =Vector3.new(60,60,60)
 
-v.HumanoidRootPart.Transparency = 1
- v.Humanoid:ChangeState(11)
- v.Humanoid:ChangeState(14)
- SoulGuitar_Farm_Name =v.Name
- SoulGuitar_Farm_CFrame =v.HumanoidRootPart.CFrame
- AutoClick()
- until v.Humanoid.Health <= 0 or not v.Parent or not AutoSoulGuitar
- end
- end
- end
- else
- Tween(CFrame.new(-10160.787109375,138.6616973876953, 5955.03076171875))
- end
- end
- else
- if
-string.find(game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("gravestoneEvent",2), "Error") then
- print("Go to Grave")
- Tween(CFrame.new(-8653.2060546875,140.98487854003906, 6160.033203125))
- elseif
-string.find(game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("gravestoneEvent",2), "Nothing") then
- print("Wait Next Night")
- else
-
-game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("gravestoneEvent",2,true)
- end
- end
- end
- else
- Tween(CFrame.new(-9681.458984375, 6.139880657196045,6341.3720703125))
- end
- end
- end)
- end
- end
-end)
+if AutoSoulGuitar then
+    if v and v.Parent and v.Humanoid then
+        v.HumanoidRootPart.Transparency = 1
+        v.Humanoid:ChangeState(11)
+        v.Humanoid:ChangeState(14)
+        SoulGuitar_Farm_Name = v.Name
+        SoulGuitar_Farm_CFrame = v.HumanoidRootPart.CFrame
+        AutoClick()
+        
+        repeat
+            wait()
+            AutoClick()  -- Gọi AutoClick liên tục trong vòng lặp
+        until not v or not v.Parent or v.Humanoid.Health <= 0 or not AutoSoulGuitar
+    else
+        Tween(CFrame.new(-10160.787109375, 138.6616973876953, 5955.03076171875))
+    end
+else
+    local graveResult = game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("gravestoneEvent", 2)
+    if string.find(graveResult, "Error") then
+        print("Go to Grave")
+        Tween(CFrame.new(-8653.2060546875, 140.98487854003906, 6160.033203125))
+    elseif string.find(graveResult, "Nothing") then
+        print("Wait Next Night")
+    else
+        game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("gravestoneEvent", 2, true)
+    end
+end
 Other_Quest:addToggle('Auto Tryluck Gravestone', AutoTryLuck, function(Value)
  AutoTryLuck = Value
  CancelTween(AutoTryLuck)
@@ -9459,30 +10047,36 @@ spawn(function()
  if v:FindFirstChild("Humanoid") and v:FindFirstChild("HumanoidRootPart") and v.Humanoid.Health > 0 then
  if v.Name == "Island Empress" then
  repeat
-game:GetService("RunService").Heartbeat:wait()
- EquipTool(SelectWeapon)
- Tween(v.HumanoidRootPart.CFrame * Farm_Mode)
- v.HumanoidRootPart.CanCollide = false
- v.HumanoidRootPart.Size = Vector3.new(60,60,60)
- v.HumanoidRootPart.Transparency = 1
- v.Humanoid:ChangeState(11)
- v.Humanoid:ChangeState(14)
- AutoClick()
- until v.Humanoid.Health <= 0 or not v.Parent or not Auto_Serpent_Bow
- end
- end
- end
- else
- Tween(game.ReplicatedStorage:FindFirstChild("Island Empress").HumanoidRootPart.CFrame)
- end
- end
- end)
-Empress").HumanoidRootPart.CFrame)
- end
- end
- end)
- end
-end)
+if Auto_Serpent_Bow then
+    if v and v.Parent and v.Humanoid then
+        EquipTool(SelectWeapon)
+        Tween(v.HumanoidRootPart.CFrame * Farm_Mode)
+        
+        v.HumanoidRootPart.CanCollide = false
+        v.HumanoidRootPart.Size = Vector3.new(60, 60, 60)
+        v.HumanoidRootPart.Transparency = 1
+        v.Humanoid:ChangeState(11)
+        v.Humanoid:ChangeState(14)
+        AutoClick()
+        
+        repeat
+            game:GetService("RunService").Heartbeat:wait()
+            
+            -- Cập nhật liên tục các thuộc tính
+            if v and v.Parent and v.Humanoid then
+                v.HumanoidRootPart.CanCollide = false
+                v.HumanoidRootPart.Transparency = 1
+                AutoClick()
+            end
+        until not v or not v.Parent or v.Humanoid.Health <= 0 or not Auto_Serpent_Bow
+    else
+        -- Di chuyển đến Island Empress nếu không tìm thấy v
+        local islandEmpress = game.ReplicatedStorage:FindFirstChild("Island Empress")
+        if islandEmpress and islandEmpress.HumanoidRootPart then
+            Tween(islandEmpress.HumanoidRootPart.CFrame)
+        end
+    end
+end
 ----------------------------------------------------//-----------------------------
 -----------------------
 --// RAIDBOUNTY Left
@@ -9577,13 +10171,11 @@ spawn(function()
 game:GetService("Players").LocalPlayer.Character:FindFirstChild("Microchip") or
 game:GetService("Players").LocalPlayer.Backpack:FindFirstChild("Microchip") then
 
-fireclickdetector(game:GetService("Workspace").Map.CircleIsland.RaidSummon.Button.M
-ain.ClickDetector)
- end
- end)
- end
- end
-end)
+-- Kiểm tra xem phần tử có tồn tại không trước khi tương tác
+local button = game:GetService("Workspace").Map.CircleIsland.RaidSummon.Button
+if button and button.Main and button.Main.ClickDetector then
+    fireclickdetector(button.Main.ClickDetector)
+end
 Law_Raids:addToggle('Auto Kill Law Raid', BossRaid, function(Value)
  BossRaid = Value
  CancelTween(BossRaid)
@@ -9700,81 +10292,73 @@ Raids:addToggle('Auto Next Island', AutoNextIsland, function(Value)
  AutoNextIsland = Value
  CancelTween(AutoNextIsland)
 end)
-spawn(function()
- while wait() do
- if AutoNextIsland then
- if
-game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible== true then
- if game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island 5") then
- if (game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island 5").CFrame.Position -
-game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).Magnitude < 2000 then
- Tween(game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island5").CFrame*CFrame.new(0,DisRaid,0))
- end
- elseif game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island 4") then
- if (game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island 4").CFrame.Position -game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).Magnitude < 2000 then
- Tween(game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island4").CFrame*CFrame.new(0,DisRaid,0))
- end
- elseif game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island 3") then
- if (game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island 3").CFrame.Position -game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).Magnitude < 2000 then
- Tween(game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island3").CFrame*CFrame.new(0,DisRaid,0))
- end
- elseif game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island 2") then
- if (game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island 2").CFrame.Position -game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).Magnitude < 2000 then
- Tween(game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island
-2").CFrame*CFrame.new(0,DisRaid,0))
- end
- elseif game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island 1") then
- if (game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island 1").CFrame.Position -game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position).Magnitude < 2000 then
- Tween(game:GetService("Workspace")
-["_WorldOrigin"].Locations:FindFirstChild("Island1").CFrame*CFrame.new(0,DisRaid,0))
- end
- end
- end
- end
- end
-end)
-Raids:addToggle('Auto Awaken', AutoAwakenAbilities, function(Value)
- AutoAwakenAbilities = Value
-end)
-spawn(function()
- while wait() do
- if AutoAwakenAbilities then
- local args1 = {
- [1] = "Awakener",
- [2] = "Check"
- }
+function UpdateLSDESP()
+    for i, v in pairs(game:GetService("Workspace").NPCs:GetChildren()) do
+        pcall(function()
+            if LADESP then
+                if v.Name == "Legendary Sword Dealer" then
+                    if not v:FindFirstChild('NameEsp') then
+                        local bill = Instance.new('BillboardGui', v)
+                        bill.Name = 'NameEsp'
+                        bill.ExtentsOffset = Vector3.new(0, 1, 0)
+                        bill.Size = UDim2.new(1, 200, 1, 30)
+                        bill.Adornee = v
+                        bill.AlwaysOnTop = true
+                        
+                        local name = Instance.new('TextLabel', bill)
+                        name.Font = Enum.Font.Code
+                        name.FontSize = Enum.FontSize.Size14
+                        name.TextWrapped = true
+                        name.Size = UDim2.new(1, 0, 1, 0)
+                        name.TextYAlignment = 'Top'
+                        name.BackgroundTransparency = 1
+                        name.TextStrokeTransparency = 0.5
+                        name.TextColor3 = Color3.fromRGB(80, 245, 245)
+                    else
+                        local distance = (game:GetService('Players').LocalPlayer.Character.Head.Position - v.Position).Magnitude / 3
+                        v.NameEsp.TextLabel.Text = string.format("%s \n%d M", v.Name, math.floor(distance + 0.5))
+                    end
+                end
+            else
+                if v.Name == "Legendary Sword Dealer" and v:FindFirstChild('NameEsp') then
+                    v.NameEsp:Destroy()
+                end
+            end
+        end)
+    end
+end
 
-game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer(unpack(args1))
- local args2 = {
- [1] = "Awakener",
- [2] = "Awaken"
- }
+task.spawn(function()
+    while task.wait(0.2) do
+        if LADESP then
+            pcall(UpdateLSDESP)
+        end
+    end
+end)
 
-game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer(unpack(args2))
- end
- end
+-- Auto Awaken Abilities Section
+local AutoAwakenAbilities = false
+
+spawn(function()
+    while task.wait() do
+        if AutoAwakenAbilities then
+            game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("Awakener", "Check")
+            game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("Awakener", "Awaken")
+        end
+    end
 end)
-Raids:addButton("Teleport to Raid Lab", function()
- if Second_Sea then
- Tween(CFrame.new(-6449.68896, 249.56958, -4497.59326, 0.69785428,5.60444446e-09, -0.71623975, -2.18662333e-09, 1, 5.69432235e-09, 0.71623975, -2.40766074e-09, 0.69785428))2.40766074e-09, 0.69785428))
- elseif Third_Sea then
- Tween(CFrame.new(-5057.146484375, 314.54132080078, -2934.7995605469))
- end
-end)
+
+-- Teleport to Raid Lab Function
+local function teleportToRaidLab()
+    local Second_Sea = Second_Sea or false
+    local Third_Sea = Third_Sea or false
+    
+    if Second_Sea then
+        Tween(CFrame.new(-6449.68896, 249.56958, -4497.59326, 0.69785428, 5.60444446e-09, -0.71623975, -2.18662333e-09, 1, 5.69432235e-09, 0.71623975, -2.40766074e-09, 0.69785428))
+    elseif Third_Sea then
+        Tween(CFrame.new(-5057.146484375, 314.54132080078, -2934.7995605469))
+    end
+end
 ----------------------------------------------------//-----------------------------
 -----------------------
 --// PVP LEFT
@@ -11537,72 +12121,124 @@ end)
 ESP_Section:addToggle('Fruit ESP (Yellow Color)', FruitESPe, function(Value)
  FruitESPe = Value
 end)
-spawn(function()
- while wait() do
- if FruitESPe then
- pcall(function()
- for a,b in pairs(game.Workspace:GetChildren()) do
- if b.Name == 'PineappleSpawner' or b.Name == 'BananaSpawner' orb.Name == 'AppleSpawner' then
- for i,v in pairs(b:GetChildren()) do
- if v:IsA('Tool') then
- if v:FindFirstChild("Handle") then
- repeat task.wait(.1)
- if not v.Handle:FindFirstChild("FruitESP")
-then
- local BillboardGui =
-Instance.new("BillboardGui")
- local TextLabel =
-Instance.new("TextLabel")
- BillboardGui.Parent = v.Handle
- BillboardGui.ZIndexBehavior =
-Enum.ZIndexBehavior.Sibling
- BillboardGui.Active = true
- BillboardGui.Name = "FruitESP"
- BillboardGui.AlwaysOnTop = true
- BillboardGui.LightInfluence = 1.000
- BillboardGui.Size = UDim2.new(0, 200,0, 50)
- BillboardGui.StudsOffset =Vector3.new(0, 2.5, 0)
- TextLabel.Parent = BillboardGui
- TextLabel.BackgroundColor3 =Color3.fromRGB(255, 255, 255)
- TextLabel.BackgroundTransparency =1.000
- TextLabel.Size = UDim2.new(0, 200, 0,50)
- TextLabel.Font = Enum.Font.GothamBold
- TextLabel.TextColor3 =
-Color3.fromRGB(255, 255, 0)
- TextLabel.FontSize = "Size14"
- TextLabel.TextStrokeTransparency = 0.5
- end
- local Dis =
-math.floor((game.Players.LocalPlayer.Character.HumanoidRootPart.Position -
-v.Handle.Position).Magnitude)
- v.Handle.FruitESP.TextLabel.Text =v.Name.."\n"..Dis.." M."
- until not FruitESPe
- end
- end
- end
- end
- end
- end)
- else
- for a,b in pairs(game.Workspace:GetChildren()) do
- if b.Name == 'PineappleSpawner' or b.Name == 'BananaSpawner' or b.Name == 'AppleSpawner' then
- for i,v in pairs(b:GetChildren()) do
- if v:IsA('Tool') then
- if v:FindFirstChild("Handle") then
- if v.Handle:FindFirstChild("FruitESP") then
- v.Handle.FruitESP:Destroy()
- end
- end
- end
- end
- end
- end
- end
- end
+local FruitESPMap = {}
+
+local function AddFruitESP(tool)
+    if FruitESPMap[tool] then return end
+    local hl = Instance.new("Highlight")
+    hl.Name = "__FruitESP"
+    hl.Adornee = tool
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.FillTransparency = 0.35
+    hl.OutlineTransparency = 0
+    hl.Parent = tool
+    FruitESPMap[tool] = hl
+end
+
+local function ClearFruitESP()
+    for tool, hl in pairs(FruitESPMap) do
+        if hl then pcall(function() hl:Destroy() end) end
+        FruitESPMap[tool] = nil
+    end
+end
+
+task.spawn(function()
+    while task.wait(0.2) do
+        if not FruitESPe then
+            if next(FruitESPMap) then
+                ClearFruitESP()
+            end
+        else
+            pcall(function()
+                -- dọn tool đã mất
+                for tool, hl in pairs(FruitESPMap) do
+                    if (not tool) or (tool.Parent == nil) then
+                        if hl then pcall(function() hl:Destroy() end) end
+                        FruitESPMap[tool] = nil
+                    end
+                end
+
+                for _, b in ipairs(workspace:GetChildren()) do
+                    if b.Name == "PineappleSpawner"
+                    or b.Name == "BananaSpawner"
+                    or b.Name == "AppleSpawner" then
+
+                        for _, v in ipairs(b:GetChildren()) do
+                            if v:IsA("Tool") then
+                                repeat task.wait(0.1)
+                                until (not FruitESPe) or (v.Parent == nil) or v:FindFirstChild("Handle")
+
+                                if FruitESPe and v.Parent and v:FindFirstChild("Handle") then
+                                    AddFruitESP(v)
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
 end)
-ESP_Section:addToggle('Flower ESP', FlowerESP, function(Value)
- FlowerESP = Value
+-- đảm bảo biến toggle có giá trị
+FlowerESP = FlowerESP or false
+
+-- tạo ESP cho 1 tool v (v có v.Handle)
+local function MakeFruitESP(v)
+    if not v or not v:FindFirstChild("Handle") then return end
+
+    -- tránh tạo trùng
+    local old = v.Handle:FindFirstChild("FruitESP")
+    if old then old:Destroy() end
+
+    local BillboardGui = Instance.new("BillboardGui")
+    BillboardGui.Name = "FruitESP"
+    BillboardGui.Parent = v.Handle
+    BillboardGui.Adornee = v.Handle
+    BillboardGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    BillboardGui.Active = true
+    BillboardGui.AlwaysOnTop = true
+    BillboardGui.LightInfluence = 1
+    BillboardGui.Size = UDim2.new(0, 200, 0, 50)
+    BillboardGui.StudsOffset = Vector3.new(0, 2.5, 0)
+
+    local TextLabel = Instance.new("TextLabel")
+    TextLabel.Name = "TextLabel"
+    TextLabel.Parent = BillboardGui
+    TextLabel.BackgroundTransparency = 1
+    TextLabel.Size = UDim2.new(1, 0, 1, 0)
+    TextLabel.Font = Enum.Font.GothamBold
+    TextLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
+    TextLabel.TextSize = 14              -- ✅ đúng
+    TextLabel.TextStrokeTransparency = 0.5
+    TextLabel.Text = v.Name
+
+do
+    FruitESPe = FruitESPe or false
+
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+
+    local SpawnerNames = {
+        PineappleSpawner = true,
+        BananaSpawner = true,
+        AppleSpawner = true,
+    }
+
+    local function CreateFruitESP(handle)
+        if handle:FindFirstChild("FruitESP") then return end
+
+        local gui = Instance.new("BillboardGui")
+        gui.Name = "FruitESP"
+        gui.Adornee = handle
+        gui.AlwaysOnTop = true
+        gui.Parent = handle
+    end
+end
+
+ESP_Section:addToggle("Flower ESP", FlowerESP, function(Value)
+    FlowerESP = Value
 end)
+
 spawn(function()
  while wait() do
  if FlowerESP then
@@ -11741,44 +12377,45 @@ ESP_Section:addToggle('Legend Sword Dealer ESP', LADESP, function(Value)
  LADESP = Value
 end)
 function UpdateLSDESP()
- for i,v in pairs(game:GetService("Workspace").NPCs:GetChildren()) do
- pcall(function()
- if LADESP then
- if v.Name == "Legendary Sword Dealer" then
- if not v:FindFirstChild('NameEsp') then
- local bill = Instance.new('BillboardGui',v)
- bill.Name = 'NameEsp'
- bill.ExtentsOffset = Vector3.new(0, 1, 0)
- bill.Size = UDim2.new(1,200,1,30)
- bill.Adornee = v
- bill.AlwaysOnTop = true
- local name = Instance.new('TextLabel',bill)
- name.Font = "Code"
- name.FontSize = "Size14"
- name.TextWrapped = true
- name.Size = UDim2.new(1,0,1,0)
- name.TextYAlignment = 'Top'
- name.BackgroundTransparency = 1
- name.TextStrokeTransparency = 0.5
- name.TextColor3 = Color3.fromRGB(80, 245, 245)
- else
- v['NameEsp'].TextLabel.Text = (v.Name ..' \n'..round((game:GetService('Players').LocalPlayer.Character.Head.Position -v.Position).Magnitude/3) ..' M')
- end
- end
- else
- if v:FindFirstChild('NameEsp') then
- v:FindFirstChild('NameEsp'):Destroy()
- end
- end
- end)
- end
+    for i, v in pairs(game:GetService("Workspace").NPCs:GetChildren()) do
+        pcall(function()
+            if LADESP then
+                if v.Name == "Legendary Sword Dealer" then
+                    if not v:FindFirstChild('NameEsp') then
+                        local bill = Instance.new('BillboardGui', v)
+                        bill.Name = 'NameEsp'
+                        bill.ExtentsOffset = Vector3.new(0, 1, 0)
+                        bill.Size = UDim2.new(1, 200, 1, 30)
+                        bill.Adornee = v
+                        bill.AlwaysOnTop = true
+                        
+                        local name = Instance.new('TextLabel', bill)
+                        name.Font = Enum.Font.Code
+                        name.FontSize = Enum.FontSize.Size14
+                        name.TextWrapped = true
+                        name.Size = UDim2.new(1, 0, 1, 0)
+                        name.TextYAlignment = 'Top'
+                        name.BackgroundTransparency = 1
+                        name.TextStrokeTransparency = 0.5
+                        name.TextColor3 = Color3.fromRGB(80, 245, 245)
+                    else
+                        local distance = (game:GetService('Players').LocalPlayer.Character.Head.Position - v.Position).Magnitude / 3
+                        v.NameEsp.TextLabel.Text = string.format("%s \n%d M", v.Name, math.floor(distance + 0.5))
+                    end
+                end
+            else
+                if v.Name == "Legendary Sword Dealer" and v:FindFirstChild('NameEsp') then
+                    v.NameEsp:Destroy()
+                end
+            end
+        end)
+    end
 end
-spawn(function()
- while wait() do
- if LADESP then
- pcall(function()
- UpdateLSDESP()
- end)
- end
- end
+
+task.spawn(function()
+    while task.wait(0.5) do
+        if type(UpdateLSDESP) == "function" then
+            pcall(UpdateLSDESP)
+        end
+    end
 end)
