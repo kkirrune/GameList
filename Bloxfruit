@@ -239,46 +239,52 @@ Main_Home:addButton("Antilag - FPS", function()
     })
 end)
 ----------------------------------------------------//----------------------------------------------------
-local Home_Left = Tab.Tab_1:addSection()
+local Home_Left = Tab.Tab_1:addSection("Thông Tin") -- Thêm tên section nếu cần
 local Changelog = Home_Left:addMenu("Thông Tin")
 Changelog:addChangelog('Hello Everyone❤️') 
-Changelog:addChangelog('Menu : Tuấn Anh IOS ' )
+Changelog:addChangelog('Menu : kkirru ' )
 Changelog:addChangelog('Thông Tin Liên Hệ')
-Changelog:addChangelog('YTB: Tuấn Anh IOS')
-Changelog:addChangelog('Tik Tok: Tuấn Anh IOS')
-Changelog:addChangelog('FB : Tuấn Anh(TúnnAngg) ')
-Changelog:addChangelog('Tạm Biệt Tất Cả Chúng Mày')
-loadstring(game:HttpGet("https://github.com/kkirrune/kkirruhubd/blob/main/FastAttack.lua"))()
+Changelog:addChangelog('FB : kkirrune ')
+Changelog:addChangelog('Tạm Biệt Tất Cả mn')
 
-----------------------------------------------------//----------------------------------------------------
-
+-- Fix loadstring: Kiểm tra dữ liệu trước khi chạy
+local fastAttack = pcall(function() 
+    local str = game:HttpGet("https://raw.githubusercontent.com/kkirrune/kkirruhubd/refs/heads/main/FastAttack.lua")
+    if str and str ~= "" then loadstring(str)() end
+end)
 --// PATH
-wait(1)
-loadstring(game:HttpGet('https://raw.githubusercontent.com/kkirrune/kkirruhubd/refs/heads/main/bypassing.lua'))()
-if
-game:GetService("Players").LocalPlayer.PlayerGui.Main:FindFirstChild("ChooseTeam")
-then
- repeat wait()
- if
-game:GetService("Players").LocalPlayer.PlayerGui:WaitForChild("Main").ChooseTeam.Visible == true then
- if _G.Team == "Pirate" then
- for i, v in
-pairs(getconnections(game:GetService("Players").LocalPlayer.PlayerGui.Main.ChooseTeam.Container.Pirates.Frame.ViewportFrame.TextButton.Activated)) do
- v.Function()
- end
- elseif _G.Team == "Marine" then
- for i, v in
-pairs(getconnections(game:GetService("Players").LocalPlayer.PlayerGui.Main.ChooseTeam.Container.Marines.Frame.ViewportFrame.TextButton.Activated)) do
- v.Function()
- end
- else
- for i, v in
-pairs(getconnections(game:GetService("Players").LocalPlayer.PlayerGui.Main.ChooseTeam.Container.Pirates.Frame.ViewportFrame.TextButton.Activated)) do
- v.Function()
- end
- end
- end
- until game.Players.LocalPlayer.Team ~= nil and game:IsLoaded()
+task.wait(1)
+
+-- Fix loadstring: Kiểm tra dữ liệu trước khi chạy
+local bypassing = pcall(function()
+    local str = game:HttpGet('https://raw.githubusercontent.com/kkirrune/kkirruhubd/refs/heads/main/bypassing.lua')
+    if str and str ~= "" then loadstring(str)() end
+end)
+
+-- Fix lỗi Main:FindFirstChild: Đợi PlayerGui và Main xuất hiện
+local Player = game:GetService("Players").LocalPlayer
+local PlayerGui = Player:WaitForChild("PlayerGui")
+local Main = PlayerGui:WaitForChild("Main", 10) -- Chờ Main tối đa 10 giây
+
+if Main and Main:FindFirstChild("ChooseTeam") then
+    repeat task.wait()
+        if Main.ChooseTeam.Visible == true then
+            if _G.Team == "Pirate" then
+                for i, v in pairs(getconnections(Main.ChooseTeam.Container.Pirates.Frame.ViewportFrame.TextButton.Activated)) do
+                    v.Function()
+                end
+            elseif _G.Team == "Marine" then
+                for i, v in pairs(getconnections(Main.ChooseTeam.Container.Marines.Frame.ViewportFrame.TextButton.Activated)) do
+                    v.Function()
+                end
+            else
+                -- Mặc định chọn Pirate nếu không thiết lập _G.Team
+                for i, v in pairs(getconnections(Main.ChooseTeam.Container.Pirates.Frame.ViewportFrame.TextButton.Activated)) do
+                    v.Function()
+                end
+            end
+        end
+    until Player.Team ~= nil and game:IsLoaded()
 end
 --// World Check
 First_Sea = false
